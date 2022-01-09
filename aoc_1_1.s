@@ -2,7 +2,6 @@
 // Assembler program to run advent of code day 1 2021 and print the answer to
 // stdout.
 //
-//
 // System calls.....
 // Place system call number in x16, and arguments in x0 through x6 from left to
 // right, then call svc 0
@@ -148,18 +147,60 @@ _count_loop_no_increment:
     bne _count_loop_start       // If not yet at end of file, back to start of
                                 // loop
 
+
+// Now we have our answer in x14! Unfortunately it is a 32-bit integer, and we
+// need to convert back to ASCII...
+// So, we need to divide by 10 and get the remainder repeatedly until we get
+// the answer, eg:
+// 1709 / 10 = 170 | 9
+// 170 / 10  = 17  | 0
+// 17 / 10   = 1   | 7
+// 1 / 10    = 0   | 1
+// Reading backwards, we get our number in single integers. We can then add 48
+// to each of these to get our ASCII characters, and then print to stdout.
+
+// The only thing currently in registers that we care about is x14, which
+// contains the answer
+// We need to track...
+_print_start:
+    mov x9, 0                   // The remainder
+    mov x10, x14                // Our remaining number
+    mov x11, 0                  // A counter of number of digits
+    mov x12, 10                 // To help divide by 10
+    mov x13, sp                 // Write location for the characters to print
+    add x13, x13, 3             // Cheating a bit - I know the output is 4
+                                // digits, so this lets us start at a position
+                                // on the stack and work backwards without
+                                // running out of room.
+    mov x15, 0                  // Helper
+    mov x17, 0                  // Another helper
+
+_print_loop_start:
+    udiv x15, x10, x12          // Stores quotient in x15
+    mov x17, x10                // Store original number in x17
+    mov x10, x15                // Store quotient in x10
+    mul x15, x15, x12           // Store quotient * 10 in x15
+    sub x9, x17, x15            // Calculate remainder
+
+    add x9, x9, 48              // Convert to ascii
+    strb w9, [x13]              // Store character in memory
+
+    add x11, x11, 1             // Add 1 to counter
+    sub x13, x13, 1             // Decrease write location by 1
+
+    cmp x10, 0                  // If quotient = 0, we are done
+    bne _print_loop_start       // Else, back to our print loop
+
+    add x11, x11, 1             // Add 1 to counter to print the final digit
+
 _print_to_stdout:
-    mov x15, 0                  // Reset x15
-    add x15, x14, 48            // Convert from number to ascii
     mov x0, #1                  // 1 = stdout
-    mov x1, x15                 // String to print out
-    mov x2, 4                   // length of string
+    mov x1, x13                 // String to print out
+    mov x2, x11                 // length of string
     mov x16, #4                 // write
     svc 0                       // Call
 
 _exit:
-// Exit
     mov     x0, #0              // Use 0 return code
     mov     x16, #1             // Exit program
     svc     0                   // Call
-
