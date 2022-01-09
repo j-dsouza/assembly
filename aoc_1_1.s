@@ -5,12 +5,11 @@
 //
 // System calls.....
 // Place system call number in x16, and arguments in x0 through x6 from left to
-// right, then call svc #0x80
+// right, then call svc 0
+// Exit = #1
 // Read = #3
-// Open = #5
 // Write = #4
-
-
+// Open = #5
 
 
 .global _start             // Provide program starting address to linker
@@ -72,49 +71,95 @@ _start:
 // 199            | \n -> Done
 
 // Once we have our number, we can overwrite the digit in the stack
-// As our numbers will fit into a 16 bit int (=2 bytes, or ASCII chars), we
+// As our numbers will fit into a 32 bit int (=4 bytes, or ASCII chars), we
 // can freely overwrite past data without accidentally altering data we
 // haven't read yet
 
 // To do this, we need to track...
-    mov x9, sp           // 1. Read position in the buffer
-    mov x10, sp          // 2. Write position in the buffer
-    mov x11, 0           // 3. Accumulated total
-    mov x12, 0           // 4. Current byte we're reading
-    mov x13, sp          // 5. The end of our useful information. sp = start
-    add x13, x13, x20    //     of our information. x20 contains the amount of
-                         //     bytes that we read from the file.
+    mov x9, sp                  // 1. Read position in the buffer
+    mov x10, sp                 // 2. Write position in the buffer
+    mov x11, 0                  // 3. Accumulated total
+    mov x12, 0                  // 4. Current byte we're reading
+    mov x13, sp                 // 5. The end of our useful information. sp = 
+    add x13, x13, x20           //    start of our information. x20 contains
+    add x13, x13, x20           //    the amount of bytes that we read from
+    add x13, x13, 1             //    the file.
 
 _convert_loop_start:
-    ldrb w12, [x9]        // Read value at x9 into x12 (1 byte)
-    cmp x12, 10         // If   x12 == 10 (= \n)
+    ldrb w12, [x9]              // Read value at x9 into x12 (1 byte)
+    cmp x12, 10                 // If   x12 == 10 (= \n)
     beq _convert_loop_newline   // Then branch to newline code
-    sub x12, x12, 48     // Else sub 48 to get back to real number
-    mov x14, 10          // So we can multiply by 10
-    mul x11, x11, x14     // Multiply accumulated total by 10
-    add x11, x11, x12    // Add new digit to accumulated total
+    sub x12, x12, 48            // Else sub 48 to get back to real number
+    mov x14, 10                 // So we can multiply by 10
+    mul x11, x11, x14           // Multiply accumulated total by 10
+    add x11, x11, x12           // Add new digit to accumulated total
 
-    b _convert_loop_end  // Glorious success
+    b _convert_loop_end         // Glorious success
 
 _convert_loop_newline:
-    str w11, [x10]       // Store x11 (accumulated total) at memory position
-                         // of x10 (write position)
-    add x10, x10, 2           // Increment x10 (write position) by 2 bytes
-    mov x11, 0           // Reset x11 (accumulated total)
+    str w11, [x10]              // Store x11 (accumulated total) at memory
+                                // position of x10 (write position)
+    add x10, x10, 4             // Increment x10 (write position) by 4 bytes
+    mov x11, 0                  // Reset x11 (accumulated total)
 
-                         // Onwards to _convert_loop_end
+                                // Onwards to _convert_loop_end
 
 _convert_loop_end:
-    add x9, x9, 1        // Increment x9 (read position) by 1 byte
-    cmp x13, x9          // Compare read position against end of buffer
-    bne _convert_loop_start  // If not at end of buffer
-    b _exit              // Exit if we are at the end of the buffer
+    add x9, x9, 1               // Increment x9 (read position) by 1 byte
+    cmp x13, x9                 // Compare read position against end of buffer
+    bne _convert_loop_start     // If not at end of buffer
 
+    str w11, [x10]              // Store our last number
 
+// Now we have all our numbers stored in memory consecutively, starting at sp.
+// The numbers are all stored as 16-bit integers (ie, 2 bytes between the
+// starting point of each digit)
+
+// So, now we need to do our actual calculation. Lets loop through our
+// numbers, comparing each number to the previous number - If it is greater
+// than the previous number, we increment a counter by 1. Note, we don't need
+// to compare the first number to anything.
+
+// We need to track...
+_processing_start:
+    add x9, sp, 4               // 1. Read position in the buffer (start off
+                                //    at sp + 2. This lets us avoid any issues
+                                //    relating to the first number having
+                                //    nothing to compare against)
+    ldr w11, [sp]               // 2. Previous 16-bit number
+    mov x12, 0                  // 3. Current 16-bit number
+    mov x14, 0                  // 4. A counter tracking increases
+    add x13, x10, 4             // 5. The end of our useful information
+
+_count_loop_start:
+    ldr w12, [x9]               // Load current number into x12 (use h12 to
+                                // get 16 bits)
+    cmp x12, x11                // Compare h12 and h11
+    blt _count_loop_no_increment // If less than, don't increment counter
+
+_count_loop_increment:
+    add x14, x14, 1             // Increment x14 (counter) by 1
+
+_count_loop_no_increment:
+    mov x11, x12                // Move current number into previous number
+    add x9, x9, 4               // Add 2 to read position
+    cmp x9, x13                 // Compare current read position to end of
+                                // useful info
+    bne _count_loop_start       // If not yet at end of file, back to start of
+                                // loop
+
+_print_to_stdout:
+    mov x15, 0                  // Reset x15
+    add x15, x14, 48            // Convert from number to ascii
+    mov x0, #1                  // 1 = stdout
+    mov x1, x15                 // String to print out
+    mov x2, 4                   // length of string
+    mov x16, #4                 // write
+    svc 0                       // Call
 
 _exit:
 // Exit
-    mov     x0, #0       // Use 0 return code
-    mov     x16, #1      // Service command code 1 terminates this program
-    svc     0            // Call MacOS to terminate the program
+    mov     x0, #0              // Use 0 return code
+    mov     x16, #1             // Exit program
+    svc     0                   // Call
 
